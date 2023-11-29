@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, session
 from . import shop
+from flask import jsonify
 from flask_login import login_required
 from ..models import db, User, Product, Cart, CartItem, Order, OrderItem
 
@@ -10,10 +11,37 @@ def index():
     products = Product.query.all()
     return render_template('index.html', products=products)
 
+@shop.route('/test')
+def test(): 
+    products = Product.query.all()
+    products_list = []
+    for product in products:
+        product_object = {
+            "id" : product.id, 
+            "product_name" : product.product_name, 
+            "description": product.description, 
+            "price": product.price, 
+            "stock_quantity": product.stock_quantity
+        }
+        products_list.append(product_object)
+    return products_list
+
+
+
 @shop.route('/product/<int:product_id>')
 def product(product_id):
-    product = Product.query.get_or_404(product_id)
-    return render_template('product.html', product=product)
+    selected_product = Product.query.get_or_404(product_id)
+    product_object = {
+        "id": selected_product.id,
+        "product_name": selected_product.product_name,
+        "description": selected_product.description,
+        "price": selected_product.price,
+        "stock_quantity": selected_product.stock_quantity
+    }
+    return render_template('product.html', product=product_object)
+
+
+
 
 @shop.route('/cart')
 def cart():
@@ -39,7 +67,7 @@ def cart():
         cart_items = []
         total = 0
 
-    return render_template('cart.html', cart_items=cart_items, total=total)
+    return render_template('cart.html', cart_items=cart_items, total=total, cart = cart)
 
 
 

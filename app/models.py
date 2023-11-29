@@ -121,6 +121,7 @@ class CartItem(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'))
     product_price = db.Column(db.Float, nullable=False)
     quantity = db.Column(db.Integer, nullable=False)
+    product = db.relationship('Product', backref='cart_item', lazy=True)
     
     def __init__(self, cart_id, user_id, product_id, product_price, quantity): 
         self.cart_id = cart_id
