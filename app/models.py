@@ -2,6 +2,8 @@ from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime 
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
+from flask_login import UserMixin
+from werkzeug.security import generate_password_hash, check_password_hash
 
 
 
@@ -11,7 +13,7 @@ db = SQLAlchemy()
 
 
 # User Model
-class User(db.Model):
+class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password = db.Column(db.String(255), nullable=False)
@@ -22,21 +24,28 @@ class User(db.Model):
 
     def __init__(self, username, password, email, first_name, last_name, address):
         self.username = username
-        self.password = password
+        self.password = generate_password_hash(password)
         self.email = email
         self.first_name = first_name
         self.last_name = last_name
         self.address = address
 
-
+    def compare_password(self, password):
+        result =  check_password_hash(self.password, password)
+        return result
 
     def create(self):
         db.session.add(self)
         db.session.commit()
 
-    def update(self):
-        db.session.add(self)
+    def update(self, **kwargs):
+        for key, value in kwargs.items():
+            if key == "password":
+                setattr(self, key, generate_password_hash(value))
+            else:
+                setattr(self, key, value)
         db.session.commit()
+
 
     def to_response(self):
         return {

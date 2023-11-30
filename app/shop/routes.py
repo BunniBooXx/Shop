@@ -1,7 +1,9 @@
 from flask import Flask, render_template, request, redirect, url_for, session
 from . import shop
-from flask import jsonify
-from flask_login import login_required
+from flask import request, make_response , jsonify
+from datetime import timedelta
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from flask_login import login_required, login_user, current_user
 from ..models import db, User, Product, Cart, CartItem, Order, OrderItem
 
 
@@ -28,6 +30,7 @@ def test():
 
 
 
+
 @shop.route('/product/<int:product_id>')
 def product(product_id):
     selected_product = Product.query.get_or_404(product_id)
@@ -38,61 +41,37 @@ def product(product_id):
         "price": selected_product.price,
         "stock_quantity": selected_product.stock_quantity
     }
-    return render_template('product.html', product=product_object)
+    return jsonify(product=product_object)
+
+@shop.route('/cart', methods=['GET'])
+@jwt_required()
+def get_cart():
+    current_user_id = get_jwt_identity()
+    cart_items = CartItem.query.filter_by(user_id=current_user_id).all()
+
+    print('cart items', cart_items)
+    cart_data = [{'id': item.id, 'name': item.product.product_name, 'description': item.product.description, 'price': item.product_price} for item in cart_items]
+    return jsonify({'cart': cart_data }), 200
 
 
 
 
-@shop.route('/cart')
-def cart():
-    if 'user' not in session:
-        return redirect(url_for('shop.login'))
-
-    user = User.query.filter_by(username=session['user']).first()
-
-    if not user:
-        return redirect(url_for('shop.login'))
-
-    cart = Cart.query.filter_by(user_id=user.id).first()
-
-    if not cart:
-        cart = Cart(user_id=user.id)
-        db.session.add(cart)
-        db.session.commit()
-
-    if cart:
-        cart_items = CartItem.query.filter_by(cart_id=cart.id).all()
-        total = sum(item.product_price * item.quantity for item in cart_items)
-    else:
-        cart_items = []
-        total = 0
-
-    return render_template('cart.html', cart_items=cart_items, total=total, cart = cart)
-
-
-
-@login_required
-@shop.route('/add_to_cart/<int:product_id>')
+@shop.route('/add_to_cart/<int:product_id>', methods=['POST'])
+@jwt_required()
 def add_to_cart(product_id):
-    if 'user' not in session:
-        return redirect(url_for('shop.login'))
-
-    user = User.query.filter_by(username=session['user']).first()
-
-    if not user:
-        return redirect(url_for('shop.login'))
+    current_user_id = get_jwt_identity()
 
     product = Product.query.get_or_404(product_id)
-    cart = Cart.query.filter_by(user_id=user.id).first()
+    cart = Cart.query.filter_by(user_id=current_user_id).first()
 
     if cart is None:
-        cart = Cart(user_id=user.id)
+        cart = Cart(user_id=current_user_id)
         db.session.add(cart)
         db.session.commit()
 
     cart_item = CartItem(
         cart_id=cart.id,
-        user_id=user.id,
+        user_id=current_user_id,
         product_id=product.id,
         product_price=product.price,
         quantity=1
@@ -101,41 +80,44 @@ def add_to_cart(product_id):
     db.session.add(cart_item)
     db.session.commit()
 
-    return redirect(url_for('shop.cart'))
+    return jsonify({'message': 'Product added to cart successfully'}), 200
+
+
+@shop.route('/remove_all_from_cart', methods=['POST'])
+@jwt_required()
+def remove_all_from_cart():
+    current_user_id = get_jwt_identity()
+
+    cart = Cart.query.filter_by(user_id=current_user_id).first()
+
+    if cart:
+        CartItem.query.filter_by(cart_id=cart.id).delete()
+        db.session.commit()
+
+        return jsonify({'message': 'All items removed from cart successfully'}), 200
+    else:
+        return jsonify({'message': 'User not found or cart is empty'}), 404
+
 
 
 @shop.route('/remove_from_cart/<int:cart_item_id>', methods=['POST'])
+@jwt_required()
 def remove_from_cart(cart_item_id):
-    if 'user' not in session:
-        return redirect(url_for('shop.login'))
+    current_user_id = get_jwt_identity()
 
-    user = User.query.filter_by(username=session['user']).first()
-    cart = Cart.query.filter_by(user_id=user.id).first()
+    cart_item = CartItem.query.filter_by(id = cart_item_id).one_or_none()
 
-    if cart:
-        cart_item = CartItem.query.filter_by(id=cart_item_id, cart_id=cart.id).first()
+    print('casrt_item', cart_item)
 
-        if cart_item:
-            db.session.delete(cart_item)
-            db.session.commit()
+    if cart_item.user_id != current_user_id:
+        return jsonify({'error': 'Unauthorized'}), 401
 
-    return redirect(url_for('shop.cart'))
+    db.session.delete(cart_item)
+    db.session.commit()
 
-@shop.route('/remove_all_from_cart', methods=['POST'])
-def remove_all_from_cart():
-    if 'user' not in session:
-        return redirect(url_for('shop.login'))
+    return jsonify({'message': 'Item removed from cart successfully'}), 200
 
-    user = User.query.filter_by(username=session['user']).first()
-    cart = Cart.query.filter_by(user_id=user.id).first()
 
-    if cart:
-        # Delete all cart items associated with the cart
-        CartItem.query.filter_by(cart_id=cart.id).delete()
-
-        db.session.commit()
-
-    return redirect(url_for('shop.cart'))
 
 
 @shop.route('/add_product', methods=['GET', 'POST'])
@@ -160,18 +142,20 @@ def add_product():
 @shop.route('/signup', methods=['GET', 'POST'])
 def signup():
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        email = request.form.get('email')
-        first_name = request.form.get('first_name')
-        last_name = request.form.get('last_name')
-        address = request.form.get('address')
+        username = request.json.get('username')
+        password = request.json.get('password')
+        email = request.json.get('email')
+        first_name = request.json.get('first_name')
+        last_name = request.json.get('last_name')
+        address = request.json.get('address')
+
+        
 
         existing_user = User.query.filter_by(username=username).first()
         if existing_user:
             return render_template('signup.html', message='Username already exists. Please choose a different one.')
 
-      
+        print('password', password)
         new_user = User(username=username, password=password, email=email, first_name=first_name, last_name=last_name, address=address)
 
        
@@ -183,19 +167,59 @@ def signup():
 
     return render_template('signup.html')
 
-@shop.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
 
-        user = User.query.filter_by(username=username, password=password).first()
 
-        if user:
-            session['user'] = username
-            return redirect(url_for('shop.index'))
+@shop.post("/login")
+def handle_login(): 
+    body = request.json
 
-    return render_template('login.html')
+    if body is None: 
+        response = {
+            "message": "username and password are required to login"
+        }
+        return response,400
+    
+    username=body.get("username")
+    if username is None:
+        response = {
+            "message": "username is required"
+        }
+        return response, 400
+    
+    password = body.get("password")
+    if password is None: 
+        response = {
+            "message": "password is required"
+        }
+        return response, 400
+
+    print('password', password)
+    user = User.query.filter_by(username=username).one_or_none()
+    if user is None: 
+        response = {
+            "message": "please create an account before trying to login"
+        }
+        return response, 400
+    
+    ok = user.compare_password(password)
+
+    print('ok', ok)
+    if not ok:
+        response={
+            "message": "invalid login"
+
+        }
+        return response, 401
+    
+
+
+    auth_token = create_access_token(identity=user, expires_delta=timedelta(days=1))
+
+    response = make_response({"message": "successfully logged in", "auth_token" : auth_token})
+     
+    response.headers["Authorization"] = f"Bearer {auth_token}"
+    return response , 200
+
 
 @shop.route('/logout')
 def logout():
